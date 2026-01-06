@@ -1,0 +1,36 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.db
+*.sqlite3
+
+# Virtual environments
+venv/
+env/
+.venv/
+
+# macOS
+.DS_Store
+
+# Local data (not for deployment)
+debug&test
+history/
+
+# ignore everything in data except raw
+data/*
+!data/raw/
+!data/raw/**
+
+# keep logs
+!logs/
+!logs/**
+
+# Credentials and secrets
+credentials.json
+*.token.jsondata/
+__pycache__/
+*.pyc
+history/
+credentials.json
