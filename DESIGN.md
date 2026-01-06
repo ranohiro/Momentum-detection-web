@@ -1,77 +1,77 @@
-# Design Specification: Momentum Detector Web App
+# 設計仕様書: Momentum Detector Web App
 
-## 1. Overview
-This project aims to migrate an existing data analysis pipeline (Momentum Detector) from a Google Sheets-based workflow to a local Web Application using Streamlit. The application will run on a local machine (Macbook), download stock data, process it, and visualize the results.
+## 1. 概要
+本プロジェクトは、既存のデータ分析パイプライン（Momentum Detector）を、GoogleスプレッドシートベースのワークフローからStreamlitを使用したローカルWebアプリケーションへ移行することを目的としています。アプリケーションはローカルマシン（Macbook）上で動作し、株価データのダウンロード、処理、および結果の可視化を行います。
 
-## 2. System Architecture
+## 2. システムアーキテクチャ
 
-The system consists of three main components:
-1.  **Data Collection & Processing (Backend)**: Existing Python scripts that download and process stock data.
-2.  **Data Storage**: Local file system (CSV files).
-3.  **User Interface (Frontend)**: Streamlit application for data visualization and control.
+システムは主に3つのコンポーネントで構成されます：
+1.  **データ収集・処理（バックエンド）**: 株価データをダウンロードし処理する既存のPythonスクリプト。
+2.  **データストレージ**: ローカルファイルシステム（CSVファイル）。
+3.  **ユーザーインターフェース（フロントエンド）**: データの可視化と制御を行うStreamlitアプリケーション。
 
-### Directory Structure
+### ディレクトリ構成
 ```
 .
-├── app.py                  # Main Streamlit application
-├── main.py                 # Orchestrator for data collection (modified)
-├── 1-csv_downloader...py   # Step 1: Download Stock Data
-├── 2-csv_downloader...py   # Step 2: Download Index Data
-├── 3-data_processor...py   # Step 3: Process Data
-├── data/                   # Data storage
-│   ├── raw/                # Raw downloaded CSVs
-│   └── processed_data/     # Processed summary CSVs
-└── logs/                   # Log files
+├── app.py                  # メインのStreamlitアプリケーション
+├── main.py                 # データ収集のオーケストレーター（変更あり）
+├── 1-csv_downloader...py   # ステップ1: 株価データダウンロード
+├── 2-csv_downloader...py   # ステップ2: インデックスデータダウンロード
+├── 3-data_processor...py   # ステップ3: データ処理
+├── data/                   # データストレージ
+│   ├── raw/                # 生データ（ダウンロードしたCSV）
+│   └── processed_data/     # 処理済みサマリーCSV
+└── logs/                   # ログファイル
 ```
 
-## 3. Functional Requirements
+## 3. 機能要件
 
-### 3.1 Data Collection
--   **Manual Trigger**: Users can trigger the data update process from the Web UI.
--   **Scheduled Execution**: (Optional) The backend can be run on a schedule, but the Web UI provides an on-demand interface.
--   **Process**:
-    1.  Download Individual Stock Data (Step 1).
-    2.  Download Index Data (Step 2).
-    3.  Process and Aggregate Data (Step 3).
-    4.  (Legacy Step 4 is removed).
-    5.  (Optional) Run Analyzer/Notifier (Step 5/6).
+### 3.1 データ収集
+-   **手動トリガー**: ユーザーはWeb UIからデータ更新プロセスを開始できます。
+-   **定期実行**: （オプション）バックエンドはスケジュール実行可能ですが、Web UIはオンデマンドのインターフェースを提供します。
+-   **プロセス**:
+    1.  個別株データのダウンロード（ステップ1）。
+    2.  インデックスデータのダウンロード（ステップ2）。
+    3.  データの処理と集計（ステップ3）。
+    4.  （レガシーステップ4は削除）。
+    5.  （オプション）アナライザー/通知機能の実行（ステップ5/6）。
 
-### 3.2 Data Visualization
--   **Sector Summary**:
-    -   Display table of sector performance (Rise/Fall counts, Weighted Average Return).
-    -   Filter by Market Cap (Small, Mid, Large, Overall).
-    -   Sortable columns.
--   **Momentum Summary**:
-    -   Display Trading Value Momentum (e.g., 5-day/20-day average ratios).
-    -   Highlight sectors with high momentum.
+### 3.2 データ可視化
+-   **セクターサマリー**:
+    -   セクターパフォーマンス（上昇/下落数、加重平均騰落率）の表を表示。
+    -   時価総額によるフィルタリング（小型、中型、大型、全体）。
+    -   ソート可能な列。
+-   **モメンタムサマリー**:
+    -   売買代金モメンタム（例: 5日/20日平均比率）を表示。
+    -   高モメンタムのセクターを強調表示。
 
-## 4. User Interface Design
+## 4. ユーザーインターフェース設計
 
-### Sidebar
--   **Navigation**: "Dashboard", "Data Management".
--   **Status**: Display the date of the latest available data.
+### サイドバー
+-   **ナビゲーション**: 「Dashboard」、「Data Management」。
+-   **ステータス**: 利用可能な最新データの日付を表示。
 
-### Dashboard Page
--   **Header**: "Market Momentum Dashboard".
--   **Tab 1: Sector Analysis**:
-    -   Table showing `sector_summary` data.
-    -   Metrics: Top performing sectors today.
--   **Tab 2: Momentum Analysis**:
-    -   Table showing `momentum_summary` data.
-    -   Visualizations: Bar charts for momentum ratios.
+### ダッシュボードページ
+-   **ヘッダー**: 「Market Momentum Dashboard」。
+-   **タブ1: セクター分析**:
+    -   `sector_summary` データを表示する表。
+    -   メトリクス: 本日のトップパフォーマンスセクター。
+-   **タブ2: モメンタム分析**:
+    -   `momentum_summary` データを表示する表。
+    -   可視化: モメンタム比率の棒グラフ。
 
-### Data Management Page
--   **Action**: "Update Data" button.
--   **Logs**: Text area displaying the execution logs of the update process.
+### データ管理ページ
+-   **アクション**: 「Update Data」ボタン。
+-   **ログ**: 更新プロセスの実行ログを表示するテキストエリア。
 
-## 5. Technology Stack
--   **Language**: Python 3
--   **Web Framework**: Streamlit
--   **Data Manipulation**: Pandas
--   **HTTP Client**: Requests
+## 5. 技術スタック
+-   **言語**: Python 3
+-   **Webフレームワーク**: Streamlit
+-   **データ操作**: Pandas
+-   **HTTPクライアント**: Requests
 
-## 6. Migration Steps
-1.  **Environment Setup**: Install `streamlit` and dependencies.
-2.  **Refactoring**: Ensure `main.py` can be triggered by Streamlit (or replicated functionality).
-3.  **Frontend Development**: Implement `app.py`.
-4.  **Testing**: Verify data flow from download to visualization.
+## 6. 移行手順
+1.  **環境セットアップ**: `streamlit` と依存関係のインストール。
+2.  **リファクタリング**: `main.py` がStreamlitからトリガー可能（または機能の複製）であることを確認。
+3.  **フロントエンド開発**: `app.py` の実装。
+4.  **テスト**: ダウンロードから可視化までのデータフローの検証。
