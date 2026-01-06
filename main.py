@@ -4,6 +4,9 @@ import sys
 import subprocess
 import datetime
 import logging
+from dotenv import load_dotenv
+
+load_dotenv()
 import argparse
 import time
 import requests

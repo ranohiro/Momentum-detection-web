@@ -3,6 +3,9 @@ import pandas as pd
 from pathlib import Path
 import sys
 import os
+from dotenv import load_dotenv
+
+load_dotenv()
 
 # main.py の run_pipeline をインポートするためにパスを追加
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
