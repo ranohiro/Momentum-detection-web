@@ -14,8 +14,9 @@ def cleanup_old_files(base_dir, days_to_keep):
             file_path = os.path.join(root, file)
             if os.path.isfile(file_path):
                 if os.path.getmtime(file_path) < cutoff:
-                    os.remove(file_path)
-                    print(f"[削除] {file_path}")
+                    # os.remove(file_path)
+                    # print(f"[削除] {file_path}")
+                    print(f"[スキップ(保護中)] {file_path} (cutoff: {cutoff})")
 
 def run_cleanup():
     """
