@@ -118,7 +118,7 @@ def compute_momentum(stock_files, date_str):
         if "日付" in df_tmp.columns:
             # 日付フォーマットの正規化
             # data/rawのcsv日付フォーマットに依存するが、ここでは単純に読み込み
-            pass
+            df_tmp["日付"] = pd.to_datetime(df_tmp["日付"].astype(str))
         else:
              # ファイル名から日付を取得して付与 (YYYYMMDD -> YYYY/MM/DD)
             d_str = f.stem.split("_")[-1]
@@ -153,11 +153,10 @@ def compute_momentum(stock_files, date_str):
 
     # 最新日(処理対象日)だけ抽出
     # date_str (YYYYMMDD) -> logic date
-    target_date = pd.to_datetime(date_str).date()
     momentum_df = daily_sum[daily_sum["日付"]==target_date].copy()
 
     # 保存用に日付を "YYYY/MM/DD" に変換
-    momentum_df["日付"] = pd.to_datetime(momentum_df["日付"]).dt.strftime("%Y/%m/%d")
+    momentum_df["日付"] = momentum_df["日付"].dt.strftime("%Y/%m/%d")
 
     return momentum_df
 
@@ -177,7 +176,7 @@ def process_date(date_str, stock_file, index_file, stock_files_all):
         # 日付列統一
         for df in [stock_df, index_df]:
             if "日付" in df.columns:
-                df["日付"] = pd.to_datetime(df["日付"]).dt.strftime("%Y/%m/%d")
+                df["日付"] = pd.to_datetime(df["日付"].astype(str)).dt.strftime("%Y/%m/%d")
 
         # 業種名統一
         stock_df["業種"] = stock_df["業種"].replace(industry_name_mapping)

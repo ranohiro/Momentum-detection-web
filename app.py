@@ -44,10 +44,37 @@ def main_app():
     elif page == "Data Management":
         show_data_management()
 
+# ... (Previous imports)
+import altair as alt
+
+# ... (Previous functions)
+
+def load_all_momentum_data(directory: Path):
+    if not directory.exists():
+        return None
+    files = sorted(directory.glob("*.csv"))
+    if not files:
+        return None
+    
+    df_list = []
+    for f in files:
+        try:
+            tmp = pd.read_csv(f)
+            # 日付カラムがあることを前提
+            if "日付" in tmp.columns:
+                df_list.append(tmp)
+        except Exception as e:
+            pass
+            
+    if not df_list:
+        return None
+        
+    return pd.concat(df_list, ignore_index=True)
+
 def show_dashboard():
     st.header("📊 Market Momentum")
 
-    tab1, tab2 = st.tabs(["Sector Summary", "Momentum Summary"])
+    tab1, tab2, tab3 = st.tabs(["Sector Summary", "Momentum Summary", "Momentum Trends"])
 
     with tab1:
         st.subheader("Sector Performance")
@@ -80,6 +107,57 @@ def show_dashboard():
                 st.bar_chart(df_momentum.set_index("業種")["売買代金5日平均/20日平均比率"])
         else:
             st.warning("No Momentum Summary data found.")
+
+    with tab3:
+        st.subheader("📈 Momentum Trends (Time Series)")
+        
+        df_all = load_all_momentum_data(MOMENTUM_DIR)
+        if df_all is not None:
+            # データ前処理
+            df_all["日付"] = pd.to_datetime(df_all["日付"])
+            
+            # 1. Line Chart: 5/20日比率の推移
+            st.markdown("#### 5-Day / 20-Day Ratio Trend")
+            
+            # セクター選択
+            all_sectors = sorted(df_all["業種"].unique())
+            default_sectors = all_sectors[:5] if len(all_sectors) > 5 else all_sectors
+            selected_sectors = st.multiselect("Select Sectors to Compare", all_sectors, default=default_sectors)
+            
+            if selected_sectors:
+                subset = df_all[df_all["業種"].isin(selected_sectors)]
+                
+                chart = alt.Chart(subset).mark_line(point=True).encode(
+                    x="日付:T",
+                    y=alt.Y("売買代金5日平均/20日平均比率", title="Ratio (5d/20d)"),
+                    color="業種",
+                    tooltip=["日付", "業種", "売買代金5日平均/20日平均比率"]
+                ).interactive()
+                st.altair_chart(chart, use_container_width=True)
+            else:
+                st.info("Select sectors to view trends.")
+                
+            # 2. Heatmap: 全セクターの比率一覧
+            st.markdown("#### Momentum Heatmap")
+            st.caption("Intensity of 5d/20d Ratio across all sectors")
+            
+            # ピボットテーブル作成
+            pivot_df = df_all.pivot(index="業種", columns="日付", values="売買代金5日平均/20日平均比率")
+            
+            # ヒートマップ表示 (Altair)
+            # データ量が多いと重いので、直近N日に絞るオプション等があっても良いが、まずは全量
+            heatmap = alt.Chart(df_all).mark_rect().encode(
+                x="日付:T",
+                y="業種:N",
+                color=alt.Color("売買代金5日平均/20日平均比率", scale=alt.Scale(scheme="redblue", domain=[0.5, 1.5], clamp=True)),
+                tooltip=["日付", "業種", "売買代金5日平均/20日平均比率"]
+            ).properties(height=600).interactive()
+            
+            st.altair_chart(heatmap, use_container_width=True)
+            
+        else:
+            st.warning("No historical momentum data found to display trends.")
+
 
 def show_data_management():
     st.header("⚙️ Data Management")
