@@ -3,8 +3,6 @@ import pandas as pd
 from pathlib import Path
 import sys
 import os
-import altair as alt
-import plotly.express as px
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -20,12 +18,16 @@ st.set_page_config(
     initial_sidebar_state="expanded",
 )
 
+if st.sidebar.button("Clear Cache"):
+    st.cache_data.clear()
+    st.rerun()
+
 # パス設定
 DATA_DIR = Path("data/processed_data")
 SECTOR_DIR = DATA_DIR / "sector_summary"
 MOMENTUM_DIR = DATA_DIR / "momentum_summary"
+INDICES_DIR = DATA_DIR / "indices"
 
-@st.cache_data
 def load_latest_file(directory: Path):
     if not directory.exists():
         return None, None
@@ -37,46 +39,128 @@ def load_latest_file(directory: Path):
     return df, latest_file.name
 
 @st.cache_data
-def load_all_history(directory: Path):
-    """ディレクトリ内の全CSVを読み込んで結合する"""
-    if not directory.exists():
-        return pd.DataFrame()
-    files = sorted(directory.glob("*.csv"))
-    if not files:
-        return pd.DataFrame()
+def load_synthetic_index(sector_name):
+    """Load synthetic sector index data."""
+    # Handle filename safety
+    safe_name = sector_name.replace("・", "_").replace("、", "_").replace(" ", "_")
+    path = INDICES_DIR / f"{safe_name}.csv"
+    if not path.exists():
+        return None
+    df = pd.read_csv(path)
+    df["日付"] = pd.to_datetime(df["日付"])
+    return df
 
-    df_list = []
-    for f in files:
-        try:
-            temp_df = pd.read_csv(f)
-            # 日付カラムのフォーマット確認/変換
-            if "日付" in temp_df.columns:
-                 temp_df["日付"] = pd.to_datetime(temp_df["日付"]).dt.date
-            df_list.append(temp_df)
-        except Exception as e:
-            st.warning(f"Failed to read {f.name}: {e}")
+@st.cache_data
+def load_benchmark_data(benchmark_name):
+    """Load Benchmark data from raw tosho files or stock files (cached)."""
+    if benchmark_name == "Nikkei 225":
+        # Read from japan-all-stock-prices
+        RAW_STOCK_DIR = Path("data/raw/japan_all_stock")
+        files = sorted(RAW_STOCK_DIR.glob("japan-all-stock-prices_*.csv"))
+        dfs = []
+        for f in files:
+            try:
+                # 只のID検索だが全ファイル読むのは重い (Optimization later)
+                temp = pd.read_csv(f, encoding="cp932")
+                # SC is string "0001"
+                row = temp[temp["SC"].astype(str) == "0001"]
+                if not row.empty:
+                    d_str = f.stem.split("_")[-1]
+                    d_fmt = f"{d_str[:4]}/{d_str[4:6]}/{d_str[6:]}"
+                    price_col = "株価" if "株価" in row.columns else "終値"
+                    close_val = str(row[price_col].values[0]).replace(",","") if not row.empty else "0"
+                    if close_val == "-": close_val = 0
+                    close = float(close_val)
+                    dfs.append({"日付": d_fmt, "Close": close})
+            except:
+                continue
+        if not dfs: return None
+        df = pd.DataFrame(dfs)
+        df["日付"] = pd.to_datetime(df["日付"])
+        return df
 
-    if df_list:
-        return pd.concat(df_list, ignore_index=True)
-    return pd.DataFrame()
+    else:
+        # Read from tosho-index-data
+        name_map = {
+            "TOPIX": "TOPIX",
+            "Growth 250": "東証グロース市場250指数"
+        }
+        target = name_map.get(benchmark_name)
+        if not target:
+            return None
+            
+        dfs = []
+        RAW_INDEX_DIR = Path("data/raw/tosho_index") 
+        files = sorted(RAW_INDEX_DIR.glob("tosho-index-data_*.csv"))
+        for f in files:
+            try:
+                temp = pd.read_csv(f, encoding="cp932")
+                row = temp[temp["指数名"] == target]
+                if not row.empty:
+                    if "日付" in row.columns:
+                        d = str(row["日付"].values[0])
+                        d_fmt = f"{d[:4]}/{d[4:6]}/{d[6:]}"
+                    else:
+                        d_str = f.stem.split("_")[-1]
+                        d_fmt = f"{d_str[:4]}/{d_str[4:6]}/{d_str[6:]}"
+                    
+                    close_val = str(row["終値"].values[0]).replace(",","")
+                    if close_val == "-": close_val = 0
+                    close = float(close_val)
+                    dfs.append({"日付": d_fmt, "Close": close})
+            except:
+                continue
+                
+        if not dfs:
+            return None
+            
+        df = pd.DataFrame(dfs)
+        df["日付"] = pd.to_datetime(df["日付"])
+        return df
 
 def main_app():
     st.title("Momentum Detector Dashboard")
 
     st.sidebar.title("Navigation")
-    page = st.sidebar.radio("Go to", ["Dashboard", "Momentum Trends", "Data Management"])
+    page = st.sidebar.radio("Go to", ["Dashboard", "Data Management"])
 
     if page == "Dashboard":
         show_dashboard()
-    elif page == "Momentum Trends":
-        show_momentum_trends()
     elif page == "Data Management":
         show_data_management()
 
-def show_dashboard():
-    st.header("📊 Market Momentum (Latest)")
+# ... (Previous imports)
+import altair as alt
+alt.data_transformers.disable_max_rows()
 
-    tab1, tab2 = st.tabs(["Sector Summary", "Momentum Summary"])
+# ... (Previous functions)
+
+def load_all_momentum_data(directory: Path):
+    if not directory.exists():
+        return None
+    files = sorted(directory.glob("*.csv"))
+    if not files:
+        return None
+    
+    df_list = []
+    for f in files:
+        try:
+            tmp = pd.read_csv(f)
+            # 日付カラムがあることを前提
+            if "日付" in tmp.columns:
+                df_list.append(tmp)
+        except Exception as e:
+            pass
+            
+    if not df_list:
+        return None
+        
+    return pd.concat(df_list, ignore_index=True)
+
+def show_dashboard():
+    st.header("📊 Market Momentum")
+
+    tab1, tab2, tab3 = st.tabs(["Sector Summary", "Momentum Summary", "Momentum Trends"])
 
     with tab1:
         st.subheader("Sector Performance")
@@ -102,90 +186,289 @@ def show_dashboard():
         df_momentum, fname = load_latest_file(MOMENTUM_DIR)
         if df_momentum is not None:
             st.caption(f"Data Source: {fname}")
-
-            # デフォルトで業種のみ表示
-            if "区分" in df_momentum.columns:
-                df_display = df_momentum[df_momentum["区分"] == "業種"]
-            else:
-                df_display = df_momentum
-
-            st.dataframe(df_display, use_container_width=True)
+            st.dataframe(df_momentum, use_container_width=True)
 
             # 簡単な可視化
-            if "売買代金5日平均/20日平均比率" in df_display.columns:
-                chart_data = df_display.set_index("名称") if "名称" in df_display.columns else df_display.set_index("業種")
-                st.bar_chart(chart_data["売買代金5日平均/20日平均比率"])
+            if "売買代金5日平均/20日平均比率" in df_momentum.columns:
+                st.bar_chart(df_momentum.set_index("業種")["売買代金5日平均/20日平均比率"])
         else:
             st.warning("No Momentum Summary data found.")
 
-def show_momentum_trends():
-    st.header("📈 Momentum Trends")
+    with tab3:
+        st.subheader("📈 Momentum Trends (Time Series)")
+        
+        df_all = load_all_momentum_data(MOMENTUM_DIR)
+        if df_all is None:
+            st.error("Data not found. Please run batch processing.")
+            return
 
-    # データ読み込み
-    df_history = load_all_history(MOMENTUM_DIR)
+        df_all["日付"] = pd.to_datetime(df_all["日付"])
+        
+        # Controls
+        col1, col2 = st.columns([2, 1])
+        with col1:
+            # Default to Trading Value Momentum (swapped order)
+            heatmap_metric = st.radio(
+                "Metric",
+                ["Trading Value Momentum (5d/20d)", "Price Return (Weighted Avg)"],
+                horizontal=True
+            )
+        with col2:
+            # Date Slider
+            min_date = df_all["日付"].min().date()
+            max_date = df_all["日付"].max().date()
+            slider_range = st.slider(
+                "Date Range",
+                min_value=min_date, max_value=max_date, value=(min_date, max_date),
+                format="YYYY/MM/DD"
+            )
 
-    if df_history.empty:
-        st.warning("No historical data found.")
-        return
+        # Filter Data
+        df_heatmap = df_all[df_all["業種"] != "市場全体"].copy()
+        mask = (df_heatmap["日付"].dt.date >= slider_range[0]) & (df_heatmap["日付"].dt.date <= slider_range[1])
+        df_heatmap = df_heatmap.loc[mask]
+        df_heatmap["date_str"] = df_heatmap["日付"].dt.strftime("%Y/%m/%d")
 
-    # フィルタリングUI
-    col1, col2 = st.columns(2)
-    with col1:
-        # 区分（Sector vs Market Cap）
-        types = list(df_history["区分"].unique()) if "区分" in df_history.columns else ["業種"]
-        selected_type = st.selectbox("Analysis Type", types, index=0)
+        # Config
+        if "Price" in heatmap_metric:
+            # High=Red, Low=Blue
+            color_opts = alt.Color("時価総額加重平均騰落率:Q", 
+                                   scale=alt.Scale(domain=[-3, 0, 3], range=['blue', 'white', 'red']), 
+                                   title="Return (%)")
+            tooltip_val = alt.Tooltip("時価総額加重平均騰落率", format=".2f")
+        else:
+            # High=Red, Low=Blue (Ratio > 1 is high)
+            color_opts = alt.Color("売買代金5日平均/20日平均比率:Q", 
+                                   scale=alt.Scale(domain=[0.5, 1.0, 1.5], range=['blue', 'white', 'red']), 
+                                   title="Ratio")
+            tooltip_val = alt.Tooltip("売買代金5日平均/20日平均比率", format=".3f")
 
-    # 選択された区分に基づいてデータをフィルタ
-    if "区分" in df_history.columns:
-        df_filtered = df_history[df_history["区分"] == selected_type].copy()
+        # Current Selection State
+        current_sector = st.session_state.get("target_sector_selector", None)
+        if current_sector is None and len(df_heatmap) > 0:
+             current_sector = sorted(df_heatmap["業種"].unique())[0]
+
+        # Define Opacity based on Logic (Not internal selection)
+        # Check against current_sector
+        # 1. Labels Chart (Clickable Y-Axis)
+        # OPTIMIZATION: Aggregate unique sectors
+        df_labels = df_heatmap[["業種"]].drop_duplicates().sort_values("業種")
+        # Add dummy date column to force X-axis rendering for layout alignment
+        if not df_heatmap.empty:
+             df_labels["date_str"] = df_heatmap["date_str"].iloc[0]
+
+        select_label = alt.selection_point(fields=['業種'], name="label_select")
+        
+        labels_chart = alt.Chart(df_labels).mark_text(align='right', baseline='middle', dx=-10).encode(
+            y=alt.Y("業種:N", title=None, axis=None, sort="ascending"),
+            # Dummy X-axis to force identical bottom padding (matching rotated dates)
+            x=alt.X("date_str:O", title="Date", axis=alt.Axis(labelAngle=-90, labelColor='transparent', titleColor='transparent', ticks=False)),
+            text=alt.Text("業種:N"),
+            color=alt.condition(select_label, alt.value("black"), alt.value("#555")),
+            opacity=alt.value(1.0)
+        ).properties(
+            title="Sector", 
+            height=600
+        ).add_params(
+            select_label
+        )
+
+        # 2. Heatmap Chart
+        select_heatmap = alt.selection_point(fields=['業種'], name="heatmap_select")
+        
+        heatmap_chart = alt.Chart(df_heatmap).mark_rect().encode(
+            x=alt.X("date_str:O", title="Date", axis=alt.Axis(labelAngle=-90)),
+            y=alt.Y("業種:N", title=None, axis=None, sort="ascending"), 
+            color=color_opts,
+            opacity=alt.value(1.0), # Always full opacity
+            tooltip=["日付", "業種", tooltip_val]
+        ).properties(
+            height=600,
+            title="Click a sector to view details below"
+        ).add_params(
+            select_heatmap
+        ).interactive()
+
+        # Layout: Side-by-side
+        # Adjust ratios: Labels (1.5) : Heatmap (5.5) to give more space for text
+        c_labels, c_map = st.columns([1.5, 5.5], gap="small")
+        
+        with c_labels:
+            evt_labels = st.altair_chart(labels_chart, use_container_width=True, on_select="rerun")
+            
+        with c_map:
+            evt_heatmap = st.altair_chart(heatmap_chart, use_container_width=True, on_select="rerun")
+        
+        # Handle Selection Events
+        new_selection = None
+        
+        # Check Labels
+        if evt_labels and "selection" in evt_labels and "label_select" in evt_labels["selection"]:
+             sel = evt_labels["selection"]["label_select"]
+             if len(sel) > 0: 
+                 new_selection = str(sel[0]["業種"])
+
+        # Check Heatmap
+        if evt_heatmap and "selection" in evt_heatmap and "heatmap_select" in evt_heatmap["selection"]:
+             sel = evt_heatmap["selection"]["heatmap_select"]
+             if len(sel) > 0: 
+                 new_selection = str(sel[0]["業種"])
+        
+        if new_selection and new_selection != st.session_state.get("target_sector_selector"):
+             st.session_state["target_sector_selector"] = new_selection
+             st.rerun()
+        
+
+
+
+    # 2. Detail Analysis Section (Bottom)
+    st.divider()
+    st.subheader("2. Sector Detail Analysis")
+    
+    # Let's try the modern `on_select` approach.
+    
+    # Actually, let's keep the selectbox available for manual override.
+    
+    # Capture Selection
+    # Streamlit < 1.35 doesn't support on_select well. Assuming modern version.
+    # If not, we fallback to multiselect.
+    # Let's assume manual selection for robustness first. "Click" request is fulfilled by visual correlation.
+    
+    # Ensure session state is initialized if needed (though selectbox will create it)
+    if "target_sector_selector" not in st.session_state:
+        st.session_state.target_sector_selector = sorted(df_all["業種"].unique())[0]
+
+    target_sector = st.selectbox(
+        "Select Sector to Analyze", 
+        sorted(df_all["業種"].unique()),
+        key="target_sector_selector"
+    )
+    
+    if target_sector:
+        # LOAD FULL DATA (No pre-filtering by date here)
+        idx_df = load_synthetic_index(target_sector)
+        
+        if idx_df is not None:
+            # Controls
+            col_d1, col_d2 = st.columns(2)
+            with col_d1:
+                cap_class = st.selectbox("Market Cap Class", ["全体", "大型", "中型", "小型", "超大型"], index=0)
+            with col_d2:
+                benchmark = st.selectbox("Benchmark Overlay", ["None", "TOPIX", "Nikkei 225", "Growth 250"])
+
+            # Filter by Cap
+            subset_all = idx_df[idx_df["時価総額帯"] == cap_class].copy()
+            subset_all = subset_all.sort_values("日付")
+
+            if subset_all.empty:
+                st.warning(f"No data for {target_sector} - {cap_class}")
+            else:
+                # Generate SMA on FULL dataset to avoid missing head
+                subset_all["SMA5"] = subset_all["終値"].rolling(5).mean()
+                subset_all["SMA25"] = subset_all["終値"].rolling(25).mean()
+                subset_all["SMA75"] = subset_all["終値"].rolling(75).mean()
+
+                # Filter for Display Range (AFTER SMA calc)
+                mask = (subset_all["日付"].dt.date >= slider_range[0]) & (subset_all["日付"].dt.date <= slider_range[1])
+                subset = subset_all.loc[mask].copy()
+                
+                # Format Date as String for Ordinal Axis (skips gaps)
+                subset["date_str"] = subset["日付"].dt.strftime("%Y/%m/%d")
+
+                # Base Chart (Candlestick)
+                # Use Ordinal X axis to skip holidays
+                base = alt.Chart(subset).encode(
+                    x=alt.X("date_str:O", title="Date", axis=alt.Axis(labelAngle=-90))
+                )
+                
+                # Candlestick: Rule (Low-High) + Bar (Open-Close)
+                rule = base.mark_rule().encode(
+                    y=alt.Y("安値:Q", title=f"{target_sector} ({cap_class})", scale=alt.Scale(zero=False)),
+                    y2="高値:Q",
+                    color=alt.condition("datum.始値 <= datum.終値", alt.value("red"), alt.value("blue"))
+                )
+                bar = base.mark_bar().encode(
+                    y="始値:Q",
+                    y2="終値:Q",
+                    color=alt.condition("datum.始値 <= datum.終値", alt.value("red"), alt.value("blue"))
+                )
+                
+                candlestick = rule + bar
+                
+                # SMA Lines
+                sma5 = base.mark_line(color='orange').encode(y='SMA5', tooltip=['SMA5'])
+                sma25 = base.mark_line(color='purple').encode(y='SMA25', tooltip=['SMA25'])
+                sma75 = base.mark_line(color='green').encode(y='SMA75', tooltip=['SMA75'])
+                
+                main_chart = candlestick + sma5 + sma25 + sma75
+                
+                # Benchmark Overlay
+                if benchmark != "None":
+                    bm_df = load_benchmark_data(benchmark)
+                    if bm_df is not None:
+                        # Normalize Benchmark matches Sector Start
+                        # 1. Filter benchmark to match range roughly
+                        bm_subset = bm_df[(bm_df["日付"] >= subset["日付"].min()) & (bm_df["日付"] <= subset["日付"].max())].copy()
+                        
+                        if not bm_subset.empty and not subset.empty:
+                            # Rebase Factor
+                            # Find the closest available data point for start date
+                            sector_start_val = subset.iloc[0]["終値"]
+                            bench_start_val = bm_subset.iloc[0]["Close"]
+                            
+                            if bench_start_val > 0:
+                                factor = sector_start_val / bench_start_val
+                                bm_subset["Rebased_Close"] = bm_subset["Close"] * factor
+                                bm_subset["date_str"] = bm_subset["日付"].dt.strftime("%Y/%m/%d")
+                                
+                                # Filter to match subset dates for ordinal axis alignment
+                                bm_subset = bm_subset[bm_subset["date_str"].isin(subset["date_str"])]
+
+                                bm_line = alt.Chart(bm_subset).mark_line(strokeDash=[5,5], color='gray').encode(
+                                    x=alt.X("date_str:O", axis=None), 
+                                    y=alt.Y("Rebased_Close:Q", title=benchmark) # Share scale roughly
+                                )
+                                # Layer WITHOUT resolve_scale to enforce shared Y axis logic (since we rebased)
+                                main_chart = alt.layer(main_chart, bm_line) 
+
+                # Volume Chart (Ordinal X)
+                vol_chart = base.mark_bar(color='gray').encode(
+                    y=alt.Y("売買代金:Q", title="Volume"),
+                    tooltip=["日付", "売買代金"]
+                ).properties(height=100)
+                
+                final_chart = alt.vconcat(main_chart.properties(height=400, title=f"{target_sector} ({cap_class}) Price"), vol_chart)
+                
+                st.altair_chart(final_chart, use_container_width=True)
+
+                # Breadth Stats
+                # Calculate for the LAST DAY in the selected range
+                if not subset.empty:
+                    last_row = subset.iloc[-1]
+                    last_date = last_row["date_str"]
+                    up = int(last_row["上昇銘柄数"])
+                    down = int(last_row["下落銘柄数"])
+                    total = int(last_row["銘柄数"])
+                    unchanged = total - (up + down)
+                    
+                    st.html(f"""
+                    <h4>Market Breadth ({last_date})</h4>
+                    <div style="font-size: 3em; font-weight: bold;">
+                        Total: {total}
+                    </div>
+                    <div>
+                        <span style="background-color: #e6fffa; color: #00b050; padding: 4px 8px; border-radius: 4px;">↑ Up: {up}</span>
+                        <span style="background-color: #fff5f5; color: #e53e3e; padding: 4px 8px; border-radius: 4px;">↓ Down: {down}</span>
+                        <span style="background-color: #edf2f7; color: #4a5568; padding: 4px 8px; border-radius: 4px;">→ Unchanged: {unchanged}</span>
+                    </div>
+                    """)
+        else:
+            st.info("Synthetic index data not available yet.")
+
+
+            
     else:
-        df_filtered = df_history.copy()
-
-    # 名称リスト
-    name_col = "名称" if "名称" in df_filtered.columns else "業種"
-    available_names = sorted(df_filtered[name_col].unique())
-
-    with col2:
-        selected_names = st.multiselect("Select Targets", available_names, default=available_names[:5])
-
-    if not selected_names:
-        st.info("Please select at least one target.")
-        return
-
-    df_chart = df_filtered[df_filtered[name_col].isin(selected_names)].copy()
-
-    # 可視化：折れ線グラフ (5日/20日平均比率)
-    st.subheader("Trading Value Momentum (5d/20d Ratio)")
-
-    chart = alt.Chart(df_chart).mark_line(point=True).encode(
-        x=alt.X("日付:T", title="Date"),
-        y=alt.Y("売買代金5日平均/20日平均比率:Q", title="5d/20d Ratio"),
-        color=alt.Color(f"{name_col}:N", title="Name"),
-        tooltip=["日付", name_col, "売買代金5日平均/20日平均比率", "売買代金（千円）"]
-    ).interactive()
-
-    st.altair_chart(chart, use_container_width=True)
-
-    # ヒートマップ
-    st.subheader("Momentum Heatmap")
-
-    # Pivot for heatmap: Index=Name, Columns=Date, Values=Ratio
-    heatmap_data = df_chart.pivot_table(
-        index=name_col,
-        columns="日付",
-        values="売買代金5日平均/20日平均比率"
-    )
-
-    # Plotly for better heatmap
-    fig = px.imshow(
-        heatmap_data,
-        labels=dict(x="Date", y="Name", color="Ratio"),
-        x=heatmap_data.columns,
-        y=heatmap_data.index,
-        color_continuous_scale="RdBu_r", # Red for high momentum? Usually High Ratio > 1.
-        origin='lower'
-    )
-    st.plotly_chart(fig, use_container_width=True)
+        st.warning("No historical momentum data found to display trends.")
 
 
 def show_data_management():

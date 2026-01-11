@@ -16,7 +16,7 @@ except ImportError:
     jpholiday = None
 from cleanup_old_data import run_cleanup
 
-run_cleanup()
+# run_cleanup() # Removed implicit execution on import
 
 # ==============================
 # 設定（必要なら変更）
@@ -110,6 +110,7 @@ def run_pipeline(continue_on_error=False):
     """
     StreamlitやCLIから呼び出せるデータ更新パイプライン
     """
+    run_cleanup() # Explicitly called when pipeline is run
     today = datetime.date.today()
     # 休場日チェックは呼び出し元で行うか、ここで行うか。
     # Streamlitで強制実行ボタンがある場合、チェックをスキップしたいかもしれないが、
