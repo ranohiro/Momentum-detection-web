@@ -243,42 +243,83 @@ def show_dashboard():
                                    title="Ratio")
             tooltip_val = alt.Tooltip("売買代金5日平均/20日平均比率", format=".3f")
 
-        # Selection
-        selection = alt.selection_point(fields=['業種'], name="sector_select")
+        # Current Selection State
+        current_sector = st.session_state.get("target_sector_selector", None)
+        if current_sector is None and len(df_heatmap) > 0:
+             current_sector = sorted(df_heatmap["業種"].unique())[0]
 
-        # Chart
-        heatmap = alt.Chart(df_heatmap).mark_rect().encode(
+        # Define Opacity based on Logic (Not internal selection)
+        # Check against current_sector
+        # 1. Labels Chart (Clickable Y-Axis)
+        # OPTIMIZATION: Aggregate unique sectors
+        df_labels = df_heatmap[["業種"]].drop_duplicates().sort_values("業種")
+        # Add dummy date column to force X-axis rendering for layout alignment
+        if not df_heatmap.empty:
+             df_labels["date_str"] = df_heatmap["date_str"].iloc[0]
+
+        select_label = alt.selection_point(fields=['業種'], name="label_select")
+        
+        labels_chart = alt.Chart(df_labels).mark_text(align='right', baseline='middle', dx=-10).encode(
+            y=alt.Y("業種:N", title=None, axis=None, sort="ascending"),
+            # Dummy X-axis to force identical bottom padding (matching rotated dates)
+            x=alt.X("date_str:O", title="Date", axis=alt.Axis(labelAngle=-90, labelColor='transparent', titleColor='transparent', ticks=False)),
+            text=alt.Text("業種:N"),
+            color=alt.condition(select_label, alt.value("black"), alt.value("#555")),
+            opacity=alt.value(1.0)
+        ).properties(
+            title="Sector", 
+            height=600
+        ).add_params(
+            select_label
+        )
+
+        # 2. Heatmap Chart
+        select_heatmap = alt.selection_point(fields=['業種'], name="heatmap_select")
+        
+        heatmap_chart = alt.Chart(df_heatmap).mark_rect().encode(
             x=alt.X("date_str:O", title="Date", axis=alt.Axis(labelAngle=-90)),
-            y=alt.Y("業種:N", title="Sector"),
+            y=alt.Y("業種:N", title=None, axis=None, sort="ascending"), 
             color=color_opts,
-            opacity=alt.condition(selection, alt.value(1), alt.value(0.3)),
+            opacity=alt.value(1.0), # Always full opacity
             tooltip=["日付", "業種", tooltip_val]
         ).properties(
             height=600,
             title="Click a sector to view details below"
         ).add_params(
-            selection
+            select_heatmap
         ).interactive()
 
-        # Render with on_select
-        event = st.altair_chart(heatmap, use_container_width=True, on_select="rerun")
+        # Layout: Side-by-side
+        # Adjust ratios: Labels (1.5) : Heatmap (5.5) to give more space for text
+        c_labels, c_map = st.columns([1.5, 5.5], gap="small")
+        
+        with c_labels:
+            evt_labels = st.altair_chart(labels_chart, use_container_width=True, on_select="rerun")
+            
+        with c_map:
+            evt_heatmap = st.altair_chart(heatmap_chart, use_container_width=True, on_select="rerun")
+        
+        # Handle Selection Events
+        new_selection = None
+        
+        # Check Labels
+        if evt_labels and "selection" in evt_labels and "label_select" in evt_labels["selection"]:
+             sel = evt_labels["selection"]["label_select"]
+             if len(sel) > 0: 
+                 new_selection = str(sel[0]["業種"])
+
+        # Check Heatmap
+        if evt_heatmap and "selection" in evt_heatmap and "heatmap_select" in evt_heatmap["selection"]:
+             sel = evt_heatmap["selection"]["heatmap_select"]
+             if len(sel) > 0: 
+                 new_selection = str(sel[0]["業種"])
+        
+        if new_selection and new_selection != st.session_state.get("target_sector_selector"):
+             st.session_state["target_sector_selector"] = new_selection
+             st.rerun()
         
 
-        
-        # Handle Selection Event
-        if event and "selection" in event:
-            if "sector_select" in event["selection"]:
-                 sel = event["selection"]["sector_select"]
-                 if sel and len(sel) > 0:
-                     try:
-                         sector_name = str(sel[0]["業種"])
-                         # Only update and rerun if the selection differs from current state
-                         # This allows the interaction to "stick" and forces a refresh to update the selectbox below
-                         if st.session_state.get("target_sector_selector") != sector_name:
-                             st.session_state["target_sector_selector"] = sector_name
-                             st.rerun()
-                     except:
-                         pass
+
 
     # 2. Detail Analysis Section (Bottom)
     st.divider()
