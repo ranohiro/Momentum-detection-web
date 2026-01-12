@@ -27,9 +27,6 @@ SCRIPTS = [
     "1-csv_downloader_individuals_v01.py",
     "2-csv_downloader_index_v01.py",
     "3-data_processor_v01.py",
-    # "4-google_sheets_uploader_v02.py", # Removed for Streamlit
-    # "5-momentum_analyzer_v03.py",
-    # "6-summary_sender_v01.py"
 ]
 DEFAULT_TIMEOUT = 600
 
