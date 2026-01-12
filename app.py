@@ -115,25 +115,11 @@ def load_benchmark_data(benchmark_name):
             return None
             
         df = pd.DataFrame(dfs)
-        df["日付"] = pd.to_datetime(df["日付"])
-        return df
-
-def main_app():
-    st.title("Momentum Detector Dashboard")
-
-    st.sidebar.title("Navigation")
-    page = st.sidebar.radio("Go to", ["Dashboard", "Data Management"])
-
-    if page == "Dashboard":
-        show_dashboard()
-    elif page == "Data Management":
-        show_data_management()
-
 # ... (Previous imports)
 import altair as alt
 alt.data_transformers.disable_max_rows()
 
-# ... (Previous functions)
+# --- Helper Functions ---
 
 def load_all_momentum_data(directory: Path):
     if not directory.exists():
@@ -157,204 +143,154 @@ def load_all_momentum_data(directory: Path):
         
     return pd.concat(df_list, ignore_index=True)
 
-def show_dashboard():
-    st.header("📊 Market Momentum")
+def show_momentum_trends():
+    st.header("📈 Momentum Trends (Time Series)")
+    
+    df_all = load_all_momentum_data(MOMENTUM_DIR)
+    if df_all is None:
+        st.error("Data not found. Please run batch processing.")
+        return
 
-    tab1, tab2, tab3 = st.tabs(["Sector Summary", "Momentum Summary", "Momentum Trends"])
-
-    with tab1:
-        st.subheader("Sector Performance")
-        df_sector, fname = load_latest_file(SECTOR_DIR)
-        if df_sector is not None:
-            st.caption(f"Data Source: {fname}")
-
-            # フィルタリング
-            caps = ["すべて"] + list(df_sector["時価総額帯"].unique()) if "時価総額帯" in df_sector.columns else []
-            selected_cap = st.selectbox("Market Cap Filter", caps, index=0)
-
-            if selected_cap != "すべて":
-                df_display = df_sector[df_sector["時価総額帯"] == selected_cap]
-            else:
-                df_display = df_sector
-
-            st.dataframe(df_display, use_container_width=True)
-        else:
-            st.warning("No Sector Summary data found.")
-
-    with tab2:
-        st.subheader("Trading Value Momentum")
-        df_momentum, fname = load_latest_file(MOMENTUM_DIR)
-        if df_momentum is not None:
-            st.caption(f"Data Source: {fname}")
-            st.dataframe(df_momentum, use_container_width=True)
-
-            # 簡単な可視化
-            if "売買代金5日平均/20日平均比率" in df_momentum.columns:
-                st.bar_chart(df_momentum.set_index("業種")["売買代金5日平均/20日平均比率"])
-        else:
-            st.warning("No Momentum Summary data found.")
-
-    with tab3:
-        st.subheader("📈 Momentum Trends (Time Series)")
-        
-        df_all = load_all_momentum_data(MOMENTUM_DIR)
-        if df_all is None:
-            st.error("Data not found. Please run batch processing.")
-            return
-
-        df_all["日付"] = pd.to_datetime(df_all["日付"])
-        
-        # Controls
-        # Controls
-        col1, col2 = st.columns([2, 1])
-        with col1:
-            # Metric Selection (Updated for Relative Momentum)
-            heatmap_metric = st.radio(
-                "Metric",
-                ["Trading Value Momentum (5d/20d)", "Relative Momentum (vs TOPIX)"],
-                horizontal=True
-            )
-        with col2:
-            # Date Slider
-            min_date = df_all["日付"].min().date()
-            max_date = df_all["日付"].max().date()
-            slider_range = st.slider(
-                "Date Range",
-                min_value=min_date, max_value=max_date, value=(min_date, max_date),
-                format="YYYY/MM/DD"
-            )
-
-        # Filter Data (Include Market Overall)
-        df_heatmap = df_all.copy()
-        
-        mask = (df_heatmap["日付"].dt.date >= slider_range[0]) & (df_heatmap["日付"].dt.date <= slider_range[1])
-        df_heatmap = df_heatmap.loc[mask].copy()
-        df_heatmap["date_str"] = df_heatmap["日付"].dt.strftime("%Y/%m/%d")
-
-        # Rename "市場全体" -> "TOPIX (Market Overall)"
-        df_heatmap["業種"] = df_heatmap["業種"].replace("市場全体", "TOPIX (Market Overall)")
-
-        # Calculate Relative Momentum
-        # 1. Extract Market Ratios per date
-        market_ratios = df_heatmap[df_heatmap["業種"] == "TOPIX (Market Overall)"].set_index("date_str")["売買代金5日平均/20日平均比率"]
-        
-        # 2. Map back to df
-        df_heatmap["Market_Ratio"] = df_heatmap["date_str"].map(market_ratios)
-        
-        # 3. Calculate Relative Ratio (Sector Ratio / Market Ratio)
-        # Avoid division by zero if necessary (though Ratio shouldn't be 0 generally)
-        df_heatmap["Relative_Ratio"] = df_heatmap["売買代金5日平均/20日平均比率"] / df_heatmap["Market_Ratio"].replace(0, 1)
-
-        # Sort Logic: TOPIX at the bottom
-        unique_sectors = sorted([s for s in df_heatmap["業種"].unique() if s != "TOPIX (Market Overall)"])
-        if "TOPIX (Market Overall)" in df_heatmap["業種"].values:
-            unique_sectors.append("TOPIX (Market Overall)")
-            
-        sort_order = unique_sectors
-
-        # Config based on Metric
-        if "Relative" in heatmap_metric:
-            plot_col = "Relative_Ratio"
-            # Domain centered at 1.0 (High=Red (Stronger than Market), Low=Blue)
-            color_opts = alt.Color(f"{plot_col}:Q", 
-                                   scale=alt.Scale(domain=[0.5, 1.0, 1.5], range=['blue', 'white', 'red']), 
-                                   title="Rel. Ratio")
-            tooltip_val = alt.Tooltip(plot_col, format=".3f")
-        else:
-            plot_col = "売買代金5日平均/20日平均比率"
-            color_opts = alt.Color(f"{plot_col}:Q", 
-                                   scale=alt.Scale(domain=[0.5, 1.0, 1.5], range=['blue', 'white', 'red']), 
-                                   title="Ratio")
-            tooltip_val = alt.Tooltip(plot_col, format=".3f")
-
-        # Current Selection State
-        current_sector = st.session_state.get("target_sector_selector", None)
-        if current_sector is None and len(df_heatmap) > 0:
-             current_sector = unique_sectors[0]
-
-        # 1. Labels Chart (Clickable Y-Axis)
-        # OPTIMIZATION: Aggregate unique sectors
-        df_labels = df_heatmap[["業種"]].drop_duplicates()
-        # Add dummy date column to force X-axis rendering for layout alignment
-        if not df_heatmap.empty:
-             df_labels["date_str"] = df_heatmap["date_str"].iloc[0]
-
-        select_label = alt.selection_point(fields=['業種'], name="label_select")
-        
-        labels_chart = alt.Chart(df_labels).mark_text(align='right', baseline='middle', dx=-10).encode(
-            y=alt.Y("業種:N", title=None, axis=None, sort=sort_order),
-            # Dummy X-axis to force identical bottom padding (matching rotated dates)
-            x=alt.X("date_str:O", title="Date", axis=alt.Axis(labelAngle=-90, labelColor='transparent', titleColor='transparent', ticks=False)),
-            text=alt.Text("業種:N"),
-            color=alt.condition(select_label, alt.value("black"), alt.value("#555")),
-            opacity=alt.value(1.0)
-        ).properties(
-            title="Sector", 
-            height=600
-        ).add_params(
-            select_label
+    df_all["日付"] = pd.to_datetime(df_all["日付"])
+    
+    # Controls
+    col1, col2 = st.columns([2, 1])
+    with col1:
+        # Metric Selection (Updated for Relative Momentum)
+        heatmap_metric = st.radio(
+            "Metric",
+            ["Trading Value Momentum (5d/20d)", "Relative Momentum (vs TOPIX)"],
+            horizontal=True
+        )
+    with col2:
+        # Date Slider
+        min_date = df_all["日付"].min().date()
+        max_date = df_all["日付"].max().date()
+        slider_range = st.slider(
+            "Date Range",
+            min_value=min_date, max_value=max_date, value=(min_date, max_date),
+            format="YYYY/MM/DD"
         )
 
-        # 2. Heatmap Chart
-        select_heatmap = alt.selection_point(fields=['業種'], name="heatmap_select")
-        
-        heatmap_chart = alt.Chart(df_heatmap).mark_rect().encode(
-            x=alt.X("date_str:O", title="Date", axis=alt.Axis(labelAngle=-90)),
-            y=alt.Y("業種:N", title=None, axis=None, sort=sort_order), 
-            color=color_opts,
-            opacity=alt.value(1.0), # Always full opacity
-            tooltip=["日付", "業種", tooltip_val]
-        ).properties(
-            height=600,
-            title="Click a sector to view details below"
-        ).add_params(
-            select_heatmap
-        ).interactive()
+    # Filter Data (Include Market Overall)
+    df_heatmap = df_all.copy()
+    
+    mask = (df_heatmap["日付"].dt.date >= slider_range[0]) & (df_heatmap["日付"].dt.date <= slider_range[1])
+    df_heatmap = df_heatmap.loc[mask].copy()
+    df_heatmap["date_str"] = df_heatmap["日付"].dt.strftime("%Y/%m/%d")
 
-        # Layout: Side-by-side
-        # Adjust ratios: Labels (1.5) : Heatmap (5.5) to give more space for text
-        c_labels, c_map = st.columns([1.5, 5.5], gap="small")
-        
-        with c_labels:
-            evt_labels = st.altair_chart(labels_chart, use_container_width=True, on_select="rerun")
-            
-        with c_map:
-            evt_heatmap = st.altair_chart(heatmap_chart, use_container_width=True, on_select="rerun")
-        
-        # Handle Selection Events
-        new_selection = None
-        
-        # Check Labels
-        if evt_labels and "selection" in evt_labels and "label_select" in evt_labels["selection"]:
-             sel = evt_labels["selection"]["label_select"]
-             if len(sel) > 0: 
-                 new_selection = str(sel[0]["業種"])
+    # Rename "市場全体" -> "TOPIX (Market Overall)"
+    df_heatmap["業種"] = df_heatmap["業種"].replace("市場全体", "TOPIX (Market Overall)")
 
-        # Check Heatmap
-        if evt_heatmap and "selection" in evt_heatmap and "heatmap_select" in evt_heatmap["selection"]:
-             sel = evt_heatmap["selection"]["heatmap_select"]
-             if len(sel) > 0: 
-                 new_selection = str(sel[0]["業種"])
-        
-        if new_selection and new_selection != st.session_state.get("target_sector_selector"):
-             st.session_state["target_sector_selector"] = new_selection
-             st.rerun()
-        
+    # Calculate Relative Momentum
+    # 1. Extract Market Ratios per date
+    market_ratios = df_heatmap[df_heatmap["業種"] == "TOPIX (Market Overall)"].set_index("date_str")["売買代金5日平均/20日平均比率"]
+    
+    # 2. Map back to df
+    df_heatmap["Market_Ratio"] = df_heatmap["date_str"].map(market_ratios)
+    
+    # 3. Calculate Relative Ratio (Sector Ratio / Market Ratio)
+    # Avoid division by zero if necessary (though Ratio shouldn't be 0 generally)
+    df_heatmap["Relative_Ratio"] = df_heatmap["売買代金5日平均/20日平均比率"] / df_heatmap["Market_Ratio"].replace(0, 1)
 
+    # Sort Logic: TOPIX at the bottom
+    unique_sectors = sorted([s for s in df_heatmap["業種"].unique() if s != "TOPIX (Market Overall)"])
+    if "TOPIX (Market Overall)" in df_heatmap["業種"].values:
+        unique_sectors.append("TOPIX (Market Overall)")
+        
+    sort_order = unique_sectors
 
+    # Config based on Metric
+    if "Relative" in heatmap_metric:
+        plot_col = "Relative_Ratio"
+        # Domain centered at 1.0 (High=Red (Stronger than Market), Low=Blue)
+        color_opts = alt.Color(f"{plot_col}:Q", 
+                               scale=alt.Scale(domain=[0.5, 1.0, 1.5], range=['blue', 'white', 'red']), 
+                               title="Rel. Ratio")
+        tooltip_val = alt.Tooltip(plot_col, format=".3f")
+    else:
+        plot_col = "売買代金5日平均/20日平均比率"
+        color_opts = alt.Color(f"{plot_col}:Q", 
+                               scale=alt.Scale(domain=[0.5, 1.0, 1.5], range=['blue', 'white', 'red']), 
+                               title="Ratio")
+        tooltip_val = alt.Tooltip(plot_col, format=".3f")
+
+    # Current Selection State
+    current_sector = st.session_state.get("target_sector_selector", None)
+    if current_sector is None and len(df_heatmap) > 0:
+            current_sector = unique_sectors[0]
+
+    # 1. Labels Chart (Clickable Y-Axis)
+    # OPTIMIZATION: Aggregate unique sectors
+    df_labels = df_heatmap[["業種"]].drop_duplicates()
+    # Add dummy date column to force X-axis rendering for layout alignment
+    if not df_heatmap.empty:
+            df_labels["date_str"] = df_heatmap["date_str"].iloc[0]
+
+    select_label = alt.selection_point(fields=['業種'], name="label_select")
+    
+    labels_chart = alt.Chart(df_labels).mark_text(align='right', baseline='middle', dx=-10).encode(
+        y=alt.Y("業種:N", title=None, axis=None, sort=sort_order),
+        # Dummy X-axis to force identical bottom padding (matching rotated dates)
+        x=alt.X("date_str:O", title="Date", axis=alt.Axis(labelAngle=-90, labelColor='transparent', titleColor='transparent', ticks=False)),
+        text=alt.Text("業種:N"),
+        color=alt.condition(select_label, alt.value("black"), alt.value("#555")),
+        opacity=alt.value(1.0)
+    ).properties(
+        title="Sector", 
+        height=600
+    ).add_params(
+        select_label
+    )
+
+    # 2. Heatmap Chart
+    select_heatmap = alt.selection_point(fields=['業種'], name="heatmap_select")
+    
+    heatmap_chart = alt.Chart(df_heatmap).mark_rect().encode(
+        x=alt.X("date_str:O", title="Date", axis=alt.Axis(labelAngle=-90)),
+        y=alt.Y("業種:N", title=None, axis=None, sort=sort_order), 
+        color=color_opts,
+        opacity=alt.value(1.0), # Always full opacity
+        tooltip=["日付", "業種", tooltip_val]
+    ).properties(
+        height=600,
+        title="Click a sector to view details below"
+    ).add_params(
+        select_heatmap
+    ).interactive()
+
+    # Layout: Side-by-side
+    # Adjust ratios: Labels (1.5) : Heatmap (5.5) to give more space for text
+    c_labels, c_map = st.columns([1.5, 5.5], gap="small")
+    
+    with c_labels:
+        evt_labels = st.altair_chart(labels_chart, use_container_width=True, on_select="rerun")
+        
+    with c_map:
+        evt_heatmap = st.altair_chart(heatmap_chart, use_container_width=True, on_select="rerun")
+    
+    # Handle Selection Events
+    new_selection = None
+    
+    # Check Labels
+    if evt_labels and "selection" in evt_labels and "label_select" in evt_labels["selection"]:
+            sel = evt_labels["selection"]["label_select"]
+            if len(sel) > 0: 
+                new_selection = str(sel[0]["業種"])
+
+    # Check Heatmap
+    if evt_heatmap and "selection" in evt_heatmap and "heatmap_select" in evt_heatmap["selection"]:
+            sel = evt_heatmap["selection"]["heatmap_select"]
+            if len(sel) > 0: 
+                new_selection = str(sel[0]["業種"])
+    
+    if new_selection and new_selection != st.session_state.get("target_sector_selector"):
+            st.session_state["target_sector_selector"] = new_selection
+            st.rerun()
 
     # 2. Detail Analysis Section (Bottom)
     st.divider()
     st.subheader("2. Sector Detail Analysis")
-    
-    # Let's try the modern `on_select` approach.
-    
-    # Actually, let's keep the selectbox available for manual override.
-    
-    # Capture Selection
-    # Streamlit < 1.35 doesn't support on_select well. Assuming modern version.
-    # If not, we fallback to multiselect.
-    # Let's assume manual selection for robustness first. "Click" request is fulfilled by visual correlation.
     
     # Ensure session state is initialized if needed (though selectbox will create it)
     if "target_sector_selector" not in st.session_state:
@@ -543,14 +479,56 @@ def show_dashboard():
         else:
             st.info("Synthetic index data not available yet.")
 
+def show_verification():
+    st.header("✅ Data Verification")
+    st.write("Below are the raw summary data used for validation purposes.")
 
-            
-    else:
-        st.warning("No historical momentum data found to display trends.")
+    tab1, tab2 = st.tabs(["Sector Summary", "Momentum Summary"])
 
+    with tab1:
+        st.subheader("Sector Performance")
+        df_sector, fname = load_latest_file(SECTOR_DIR)
+        if df_sector is not None:
+            st.caption(f"Data Source: {fname}")
+
+            # フィルタリング
+            caps = ["すべて"] + list(df_sector["時価総額帯"].unique()) if "時価総額帯" in df_sector.columns else []
+            selected_cap = st.selectbox("Market Cap Filter", caps, index=0)
+
+            if selected_cap != "すべて":
+                df_display = df_sector[df_sector["時価総額帯"] == selected_cap]
+            else:
+                df_display = df_sector
+
+            st.dataframe(df_display, use_container_width=True)
+        else:
+            st.warning("No Sector Summary data found.")
+
+    with tab2:
+        st.subheader("Trading Value Momentum")
+        df_momentum, fname = load_latest_file(MOMENTUM_DIR)
+        if df_momentum is not None:
+            st.caption(f"Data Source: {fname}")
+            st.dataframe(df_momentum, use_container_width=True)
+
+            # 簡単な可視化
+            if "売買代金5日平均/20日平均比率" in df_momentum.columns:
+                st.bar_chart(df_momentum.set_index("業種")["売買代金5日平均/20日平均比率"])
+        else:
+            st.warning("No Momentum Summary data found.")
 
 def show_data_management():
     st.header("⚙️ Data Management")
+    
+    st.info("""
+    **機能の目的**:
+    このページは、データの更新状態の確認や、手動でのデータ更新を行うための管理画面です。
+    通常の運用では、データは自動的にバッチ処理で更新されるため、ここで操作を行う必要はありません。
+    
+    **使用シーン**:
+    1.  **データが最新でない場合**: ダッシュボードの日付が古い場合、右の「Run Data Update」ボタンを押して強制的に最新データを取り込むことができます。
+    2.  **エラー確認**: システムに異常がある場合、下の「Logs」からエラー内容を確認できます。
+    """)
 
     st.write("Click the button below to manually trigger the data update process.")
 
@@ -574,6 +552,21 @@ def show_data_management():
                     st.text_area("Log Content", f.read(), height=300)
         else:
             st.info("No log files found.")
+
+def main_app():
+    st.title("Momentum Detector Dashboard")
+
+    st.sidebar.title("Navigation")
+    
+    # Updated Navigation
+    page = st.sidebar.radio("Go to", ["Momentum Trends", "Data Verification", "Data Management"])
+
+    if page == "Momentum Trends":
+        show_momentum_trends()
+    elif page == "Data Verification":
+        show_verification()
+    elif page == "Data Management":
+        show_data_management()
 
 if __name__ == "__main__":
     main_app()
