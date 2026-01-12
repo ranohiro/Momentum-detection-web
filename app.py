@@ -484,6 +484,62 @@ def show_dashboard():
                         <span style="background-color: #edf2f7; color: #4a5568; padding: 4px 8px; border-radius: 4px;">→ Unchanged: {unchanged}</span>
                     </div>
                     """)
+
+                    # === 3. Stock List Detail ===
+                    st.divider()
+                    st.subheader("3. Stock List Detail")
+                    
+                    STOCK_LIST_DIR = DATA_DIR / "stock_list"
+                    date_clean = last_date.replace("/", "")
+                    target_file = STOCK_LIST_DIR / f"{date_clean}_stock_list.csv"
+                    
+                    if target_file.exists():
+                        df_list = pd.read_csv(target_file)
+                        
+                        # 1. Filter by Sector
+                        # "TOPIX (Market Overall)" means ALL sectors
+                        if target_sector != "TOPIX (Market Overall)":
+                            df_list = df_list[df_list["Sector"] == target_sector]
+                            
+                        # 2. Filter by Market Cap
+                        if cap_class != "全体":
+                            df_list = df_list[df_list["MarketCapClass"] == cap_class]
+                        
+                        # Tabs
+                        tab_all, tab_up, tab_down, tab_unchanged = st.tabs(["All", "Up", "Down", "Unchanged"])
+                        
+                        # Column Config
+                        col_config = {
+                            "Code": st.column_config.TextColumn("Code"),
+                            "Name": st.column_config.TextColumn("Name"),
+                            "Close": st.column_config.NumberColumn("Close", format="%.0f"),
+                            "Return_1d": st.column_config.NumberColumn("1d Ret", format="%.2%", help="1 Day Return"),
+                            "Return_1w": st.column_config.NumberColumn("1w Ret", format="%.2%", help="1 Week Return"),
+                            "Return_1m": st.column_config.NumberColumn("1m Ret", format="%.2%", help="1 Month Return"),
+                            "Volume_20d_Avg": st.column_config.NumberColumn("20d Avg Vol", format="%d", help="20-Day Average Trading Volume"),
+                            "Sector": st.column_config.TextColumn("Sector"),
+                        }
+                        
+                        # Sorting Default
+                        df_list = df_list.sort_values("Return_1d", ascending=False)
+                        
+                        # Selecting Columns
+                        display_cols = ["Code", "Name", "Sector", "Close", "Return_1d", "Return_1w", "Return_1m", "Volume_20d_Avg"]
+                        
+                        with tab_all:
+                            st.dataframe(df_list[display_cols], use_container_width=True, hide_index=True, column_config=col_config)
+                            
+                        with tab_up:
+                            st.dataframe(df_list[df_list["Return_1d"] > 0][display_cols], use_container_width=True, hide_index=True, column_config=col_config)
+                            
+                        with tab_down:
+                            st.dataframe(df_list[df_list["Return_1d"] < 0][display_cols], use_container_width=True, hide_index=True, column_config=col_config)
+                            
+                        with tab_unchanged:
+                            st.dataframe(df_list[df_list["Return_1d"] == 0][display_cols], use_container_width=True, hide_index=True, column_config=col_config)
+                            
+                    else:
+                        st.info("No detailed stock list available for this date.")
         else:
             st.info("Synthetic index data not available yet.")
 

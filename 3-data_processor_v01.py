@@ -20,10 +20,12 @@ sector_dir = Path("data/processed_data/sector_summary")
 momentum_dir = Path("data/processed_data/momentum_summary")
 indices_dir = Path("data/processed_data/indices")
 indices_daily_dir = indices_dir / "daily"
+stock_list_dir = Path("data/processed_data/stock_list")
 sector_dir.mkdir(parents=True, exist_ok=True)
 momentum_dir.mkdir(parents=True, exist_ok=True)
 indices_dir.mkdir(parents=True, exist_ok=True)
 indices_daily_dir.mkdir(parents=True, exist_ok=True)
+stock_list_dir.mkdir(parents=True, exist_ok=True)
 
 # === 時価総額帯分類 (Updated Def) ===
 def classify_market_cap(x):
@@ -382,6 +384,144 @@ def consolidate_indices():
     
     logger.info("Consolidation complete.")
 
+# === Stock List Generation (for App Detail View) ===
+def generate_stock_list(stock_files, date_str):
+    stock_files_sorted = sorted(stock_files)
+    
+    # Target Index
+    target_idx = -1
+    for i, f in enumerate(stock_files_sorted):
+        if f.stem.endswith(date_str):
+            target_idx = i
+            break
+            
+    if target_idx == -1:
+        return False
+
+    # Define range (Past 20 files max)
+    # used for Volume Avg and 1m Return
+    start_idx = max(0, target_idx - 19)
+    recent_files = stock_files_sorted[start_idx : target_idx + 1]
+    
+    # Load all files in range
+    dfs = []
+    for f in recent_files:
+        try:
+            d_s = f.stem.split("_")[-1]
+            # Date object
+            dt = pd.to_datetime(d_s).date()
+            
+            df = pd.read_csv(f, encoding="cp932")
+            # Rename Raw Columns (SC -> コード, 名称 -> 銘柄名)
+            df = df.rename(columns={"SC": "コード", "名称": "銘柄名", "株価": "終値"})
+
+            # Cleaning
+            if "業種" in df.columns:
+                df = df[df["業種"] != "株価指数"]
+            
+            df["業種"] = df["業種"].replace(industry_name_mapping)
+            
+            # Numeric conversion
+            df["終値"] = pd.to_numeric(df["終値"].astype(str).str.replace(",", "").replace("-", ""), errors="coerce")
+            
+            # Identify Volume Column
+            val_col_candidates = [c for c in df.columns if "売買代金" in c]
+            if val_col_candidates:
+                df["売買代金"] = pd.to_numeric(df[val_col_candidates[0]].astype(str).str.replace(",", ""), errors="coerce").fillna(0)
+            else:
+                df["売買代金"] = 0
+                
+            # Cap Class (Need to recalc or trust raw? Recalc specific to date)
+            df["時価総額（百万円）"] = pd.to_numeric(df["時価総額（百万円）"].astype(str).str.replace(",", "").replace("-","0"), errors="coerce")
+            df["MarketCapClass"] = df["時価総額（百万円）"].apply(classify_market_cap)
+
+            # Keep necessary cols
+            # コード, 銘柄名, 業種, 終値, 売買代金, MarketCapClass
+            df = df[["コード", "銘柄名", "業種", "終値", "売買代金", "MarketCapClass"]].copy()
+            df["Date"] = dt
+            dfs.append(df)
+            
+        except Exception as e:
+            logger.warning(f"Error reading stock file {f}: {e}")
+            continue
+            
+    if not dfs:
+        return False
+        
+    df_concat = pd.concat(dfs, ignore_index=True)
+    
+    # --- Base Data (Today) ---
+    target_date = pd.to_datetime(date_str).date()
+    df_base = df_concat[df_concat["Date"] == target_date].copy()
+    if df_base.empty:
+        return False
+        
+    df_base = df_base.rename(columns={"終値": "Close", "銘柄名": "Name", "業種": "Sector", "コード": "Code"})
+    
+    # --- 1. Volume 20d Avg ---
+    # Avg of available data in the 20d window
+    vol_avg = df_concat.groupby("コード")["売買代金"].mean().reset_index().rename(columns={"売買代金": "Volume_20d_Avg", "コード": "Code"})
+    df_base = df_base.merge(vol_avg, on="Code", how="left")
+    
+    # --- 2. Returns Calculation ---
+    # Helper to get past close
+    def get_past_close(days_ago_idx):
+        # recent_files is [..., target]
+        # target_idx is recent_files[-1]
+        # days_ago is index from end. 
+        # e.g. 1d ago = -2, 5d ago = -6
+        if len(recent_files) >= days_ago_idx:
+             past_date = pd.to_datetime(recent_files[-days_ago_idx].stem.split("_")[-1]).date()
+             # extract from df_concat
+             past_df = df_concat[df_concat["Date"] == past_date][["コード", "終値"]]
+             return past_df.rename(columns={"終値": "Close_Past", "コード": "Code"})
+        return None
+
+    # 1d Return (vs 1 file ago) - 2nd from last
+    r1_df = get_past_close(2)
+    if r1_df is not None:
+        df_base = df_base.merge(r1_df, on="Code", how="left", suffixes=("", "_1d"))
+        df_base["Return_1d"] = (df_base["Close"] / df_base["Close_Past"] - 1)
+        df_base = df_base.drop(columns=["Close_Past"])
+    else:
+        df_base["Return_1d"] = 0.0
+
+    # 1w Return (vs 5 files ago) - 6th from last
+    r1w_df = get_past_close(6) 
+    if r1w_df is not None:
+        df_base = df_base.merge(r1w_df, on="Code", how="left", suffixes=("", "_1w"))
+        df_base["Return_1w"] = (df_base["Close"] / df_base["Close_Past"] - 1)
+        df_base = df_base.drop(columns=["Close_Past"])
+    else:
+        df_base["Return_1w"] = 0.0
+
+    # 1m Return (vs 20 files ago) - 20 (approx 1 month) -> file list length is 20, so 1st file (index 0) = -20
+    # recent_files has max 20 items. index 0 is the oldest.
+    # index 0 corresponds to 'Length' days ago?
+    # No, recent_files[-20] is the first item.
+    r1m_df = get_past_close(20)
+    if r1m_df is not None:
+        df_base = df_base.merge(r1m_df, on="Code", how="left", suffixes=("", "_1m"))
+        df_base["Return_1m"] = (df_base["Close"] / df_base["Close_Past"] - 1)
+        df_base = df_base.drop(columns=["Close_Past"])
+    else:
+        df_base["Return_1m"] = 0.0
+        
+    # Formatting
+    # Rounding
+    for col in ["Return_1d", "Return_1w", "Return_1m"]:
+        df_base[col] = df_base[col].fillna(0).round(4)
+        
+    df_base["Volume_20d_Avg"] = df_base["Volume_20d_Avg"].fillna(0).astype(int)
+    
+    # Save
+    out_path = stock_list_dir / f"{date_str}_stock_list.csv"
+    
+    # Select final columns
+    out_cols = ["Code", "Name", "Sector", "MarketCapClass", "Close", "Return_1d", "Return_1w", "Return_1m", "Volume_20d_Avg"]
+    df_base[out_cols].to_csv(out_path, index=False, encoding="utf-8-sig")
+    return True
+
 # === Main Batch Processing ===
 def process_date(date_str, stock_file, index_file, stock_files_all):
     logger.info(f"Processing {date_str}...")
@@ -456,7 +596,12 @@ def process_date(date_str, stock_file, index_file, stock_files_all):
         syn_df["日付"] = date_slash
         syn_output = indices_daily_dir / f"{date_str}_synthetic.csv"
         syn_df.to_csv(syn_output, index=False, encoding="utf-8-sig")
-        
+
+        # 4. Stock List Generation (Detail View)
+        # Only run if raw files exist (already checked in process_date but we neeed stock_files_all)
+        # We pass stock_files_all to it.
+        generate_stock_list(stock_files_all, date_str)
+
         return True
 
     except Exception as e:
