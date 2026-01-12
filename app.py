@@ -205,12 +205,13 @@ def show_dashboard():
         df_all["日付"] = pd.to_datetime(df_all["日付"])
         
         # Controls
+        # Controls
         col1, col2 = st.columns([2, 1])
         with col1:
-            # Default to Trading Value Momentum (swapped order)
+            # Metric Selection (Updated for Relative Momentum)
             heatmap_metric = st.radio(
                 "Metric",
-                ["Trading Value Momentum (5d/20d)", "Price Return (Weighted Avg)"],
+                ["Trading Value Momentum (5d/20d)", "Relative Momentum (vs TOPIX)"],
                 horizontal=True
             )
         with col2:
@@ -223,36 +224,57 @@ def show_dashboard():
                 format="YYYY/MM/DD"
             )
 
-        # Filter Data
-        df_heatmap = df_all[df_all["業種"] != "市場全体"].copy()
+        # Filter Data (Include Market Overall)
+        df_heatmap = df_all.copy()
+        
         mask = (df_heatmap["日付"].dt.date >= slider_range[0]) & (df_heatmap["日付"].dt.date <= slider_range[1])
-        df_heatmap = df_heatmap.loc[mask]
+        df_heatmap = df_heatmap.loc[mask].copy()
         df_heatmap["date_str"] = df_heatmap["日付"].dt.strftime("%Y/%m/%d")
 
-        # Config
-        if "Price" in heatmap_metric:
-            # High=Red, Low=Blue
-            color_opts = alt.Color("時価総額加重平均騰落率:Q", 
-                                   scale=alt.Scale(domain=[-3, 0, 3], range=['blue', 'white', 'red']), 
-                                   title="Return (%)")
-            tooltip_val = alt.Tooltip("時価総額加重平均騰落率", format=".2f")
+        # Rename "市場全体" -> "TOPIX (Market Overall)"
+        df_heatmap["業種"] = df_heatmap["業種"].replace("市場全体", "TOPIX (Market Overall)")
+
+        # Calculate Relative Momentum
+        # 1. Extract Market Ratios per date
+        market_ratios = df_heatmap[df_heatmap["業種"] == "TOPIX (Market Overall)"].set_index("date_str")["売買代金5日平均/20日平均比率"]
+        
+        # 2. Map back to df
+        df_heatmap["Market_Ratio"] = df_heatmap["date_str"].map(market_ratios)
+        
+        # 3. Calculate Relative Ratio (Sector Ratio / Market Ratio)
+        # Avoid division by zero if necessary (though Ratio shouldn't be 0 generally)
+        df_heatmap["Relative_Ratio"] = df_heatmap["売買代金5日平均/20日平均比率"] / df_heatmap["Market_Ratio"].replace(0, 1)
+
+        # Sort Logic: TOPIX at the bottom
+        unique_sectors = sorted([s for s in df_heatmap["業種"].unique() if s != "TOPIX (Market Overall)"])
+        if "TOPIX (Market Overall)" in df_heatmap["業種"].values:
+            unique_sectors.append("TOPIX (Market Overall)")
+            
+        sort_order = unique_sectors
+
+        # Config based on Metric
+        if "Relative" in heatmap_metric:
+            plot_col = "Relative_Ratio"
+            # Domain centered at 1.0 (High=Red (Stronger than Market), Low=Blue)
+            color_opts = alt.Color(f"{plot_col}:Q", 
+                                   scale=alt.Scale(domain=[0.5, 1.0, 1.5], range=['blue', 'white', 'red']), 
+                                   title="Rel. Ratio")
+            tooltip_val = alt.Tooltip(plot_col, format=".3f")
         else:
-            # High=Red, Low=Blue (Ratio > 1 is high)
-            color_opts = alt.Color("売買代金5日平均/20日平均比率:Q", 
+            plot_col = "売買代金5日平均/20日平均比率"
+            color_opts = alt.Color(f"{plot_col}:Q", 
                                    scale=alt.Scale(domain=[0.5, 1.0, 1.5], range=['blue', 'white', 'red']), 
                                    title="Ratio")
-            tooltip_val = alt.Tooltip("売買代金5日平均/20日平均比率", format=".3f")
+            tooltip_val = alt.Tooltip(plot_col, format=".3f")
 
         # Current Selection State
         current_sector = st.session_state.get("target_sector_selector", None)
         if current_sector is None and len(df_heatmap) > 0:
-             current_sector = sorted(df_heatmap["業種"].unique())[0]
+             current_sector = unique_sectors[0]
 
-        # Define Opacity based on Logic (Not internal selection)
-        # Check against current_sector
         # 1. Labels Chart (Clickable Y-Axis)
         # OPTIMIZATION: Aggregate unique sectors
-        df_labels = df_heatmap[["業種"]].drop_duplicates().sort_values("業種")
+        df_labels = df_heatmap[["業種"]].drop_duplicates()
         # Add dummy date column to force X-axis rendering for layout alignment
         if not df_heatmap.empty:
              df_labels["date_str"] = df_heatmap["date_str"].iloc[0]
@@ -260,7 +282,7 @@ def show_dashboard():
         select_label = alt.selection_point(fields=['業種'], name="label_select")
         
         labels_chart = alt.Chart(df_labels).mark_text(align='right', baseline='middle', dx=-10).encode(
-            y=alt.Y("業種:N", title=None, axis=None, sort="ascending"),
+            y=alt.Y("業種:N", title=None, axis=None, sort=sort_order),
             # Dummy X-axis to force identical bottom padding (matching rotated dates)
             x=alt.X("date_str:O", title="Date", axis=alt.Axis(labelAngle=-90, labelColor='transparent', titleColor='transparent', ticks=False)),
             text=alt.Text("業種:N"),
@@ -278,7 +300,7 @@ def show_dashboard():
         
         heatmap_chart = alt.Chart(df_heatmap).mark_rect().encode(
             x=alt.X("date_str:O", title="Date", axis=alt.Axis(labelAngle=-90)),
-            y=alt.Y("業種:N", title=None, axis=None, sort="ascending"), 
+            y=alt.Y("業種:N", title=None, axis=None, sort=sort_order), 
             color=color_opts,
             opacity=alt.value(1.0), # Always full opacity
             tooltip=["日付", "業種", tooltip_val]
